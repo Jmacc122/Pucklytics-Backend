@@ -78,6 +78,19 @@ def _row_to_game_state(row: dict) -> GameState:
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@app.get("/admin/migrate")
+async def run_migration():
+    """One-time migration: add period and time_remaining columns to tilt_history."""
+    async with database.get_pool().acquire() as conn:
+        await conn.execute(
+            "ALTER TABLE tilt_history ADD COLUMN IF NOT EXISTS period INTEGER NOT NULL DEFAULT 0"
+        )
+        await conn.execute(
+            "ALTER TABLE tilt_history ADD COLUMN IF NOT EXISTS time_remaining TEXT NOT NULL DEFAULT ''"
+        )
+    return {"migrated": True}
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health():
     return HealthResponse(status="ok")
