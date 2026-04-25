@@ -27,9 +27,13 @@ _scheduler = create_scheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
-    await database.init_db()
-    _scheduler.start()
+    print("Starting up...")
+    try:
+        await database.init_db()
+        _scheduler.start()
+    except Exception as exc:
+        print(f"Startup failed: {exc}")
+        raise
     yield
     # Shutdown
     _scheduler.shutdown(wait=False)
