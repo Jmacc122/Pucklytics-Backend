@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 import database
@@ -240,13 +240,17 @@ async def get_game(game_id: int):
 
 
 @app.get("/games/{game_id}/tilt", response_model=TiltResponse)
-async def get_tilt(game_id: int):
-    """Return current tilt scores and the last 20 tilt history records."""
-    history_rows = await database.get_tilt_history(game_id, limit=20)
+async def get_tilt(
+    game_id: int,
+    full: bool = Query(default=False, description="Return all records ascending instead of last 20"),
+):
+    """Return current tilt scores and tilt history. Use ?full=true for complete game history."""
+    history_rows = await database.get_tilt_history(game_id, full=full)
     if not history_rows:
         raise HTTPException(status_code=404, detail=f"No tilt data for game {game_id}")
 
-    latest = history_rows[0]  # rows are ordered DESC so first is most recent
+    # full=true returns ASC (oldest first); full=false returns DESC (newest first)
+    latest = history_rows[-1] if full else history_rows[0]
     return TiltResponse(
         game_id=game_id,
         net_tilt=latest["net_tilt"],

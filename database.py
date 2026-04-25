@@ -187,17 +187,18 @@ async def insert_tilt(
         )
 
 
-async def get_tilt_history(game_id: int, limit: int = 20) -> list[dict]:
+async def get_tilt_history(game_id: int, limit: int = 20, full: bool = False) -> list[dict]:
     async with get_pool().acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT * FROM tilt_history
-            WHERE game_id = $1
-            ORDER BY timestamp DESC
-            LIMIT $2
-            """,
-            game_id, limit,
-        )
+        if full:
+            rows = await conn.fetch(
+                "SELECT * FROM tilt_history WHERE game_id = $1 ORDER BY timestamp ASC",
+                game_id,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT * FROM tilt_history WHERE game_id = $1 ORDER BY timestamp DESC LIMIT $2",
+                game_id, limit,
+            )
     return [dict(r) for r in rows]
 
 
