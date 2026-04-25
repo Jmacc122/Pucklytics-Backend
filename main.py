@@ -7,6 +7,7 @@ for the frontend to consume.
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -92,9 +93,50 @@ async def test_schedule():
 
 @app.get("/games/today", response_model=list[GameState])
 async def get_today_games():
-    """Return all games with state recorded today (UTC)."""
-    rows = await database.get_today_games()
-    return [_row_to_game_state(r) for r in rows]
+    """
+    Return all of today's games from the NHL API, merged with live DB data.
+
+    Games not yet tracked in the DB are returned with default values so the
+    frontend can display the full schedule before games start.
+    """
+    try:
+        api_games = await fetch_schedule()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"NHL API error: {exc}")
+
+    # One DB query; index by game_id for O(1) lookups below
+    db_rows = await database.get_today_games()
+    db_by_id: dict[int, dict] = {row["game_id"]: row for row in db_rows}
+
+    results = []
+    for api_game in api_games:
+        game_id = api_game["game_id"]
+        db_row = db_by_id.get(game_id)
+
+        if db_row:
+            # Merge: DB supplies live play data; API supplies the freshest game_state
+            state = _row_to_game_state(db_row)
+            state = state.model_copy(update={"game_state": api_game["game_state"]})
+        else:
+            # Game exists on the schedule but hasn't been tracked yet
+            state = GameState(
+                game_id=game_id,
+                home_team=api_game["home_team"],
+                away_team=api_game["away_team"],
+                home_score=0,
+                away_score=0,
+                period=0,
+                time_remaining="",
+                game_state=api_game["game_state"],
+                strength="evenStrength",
+                empty_net="none",
+                win_probability=None,
+                updated_at=datetime.now(timezone.utc),
+            )
+
+        results.append(state)
+
+    return results
 
 
 @app.get("/games/{game_id}", response_model=GameState)
