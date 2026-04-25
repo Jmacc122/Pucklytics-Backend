@@ -100,6 +100,11 @@ class TiltEngine:
 
         team_side = "home" if team_abbrev == home_abbrev else "away"
 
+        # Penalty weight goes to the team going on the power play, not the offender
+        if event_type == "penalty":
+            team_side = "away" if team_side == "home" else "home"
+            team_abbrev = away_abbrev if team_abbrev == home_abbrev else home_abbrev
+
         self._queue.append(
             WeightedEvent(
                 event_id=event.get("eventId", 0),
