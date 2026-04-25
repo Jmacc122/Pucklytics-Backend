@@ -18,6 +18,7 @@ EVENT_WEIGHTS: dict[str, float] = {
     "faceoff": 0.1,
     "takeaway": 0.1,
     "penalty": 2.0,
+    "goal": 2.0,
 }
 
 # Step decay factors keyed by age bucket (seconds elapsed since event)
@@ -62,12 +63,15 @@ class TiltEngine:
         self._queue: Deque[WeightedEvent] = deque()
         self._current_period: int = 0
 
-    def push_event(self, event: dict, home_team_abbrev: str) -> None:
+    def push_event(self, event: dict, home_team: dict, away_team: dict) -> None:
         """
         Ingest a raw play-by-play event dict from the NHL API.
 
-        Expected fields: typeDescKey, details.eventOwnerTeamAbbrev,
-        periodDescriptor.number, timeInPeriod, eventId, sortOrder.
+        home_team / away_team are the raw team objects from the API response,
+        each containing at minimum 'abbrev' and 'id'.
+
+        Team resolution: prefer eventOwnerTeamAbbrev from event details;
+        fall back to matching eventOwnerTeamId against home/away IDs.
         """
         event_type = event.get("typeDescKey", "")
         weight = EVENT_WEIGHTS.get(event_type)
@@ -81,8 +85,20 @@ class TiltEngine:
             self._queue.clear()
         self._current_period = period
 
-        team_abbrev = event.get("details", {}).get("eventOwnerTeamAbbrev", "")
-        team_side = "home" if team_abbrev == home_team_abbrev else "away"
+        home_abbrev = home_team.get("abbrev", "")
+        away_abbrev = away_team.get("abbrev", "")
+        details = event.get("details", {})
+
+        team_abbrev = details.get("eventOwnerTeamAbbrev", "")
+        if not team_abbrev:
+            # Fallback: resolve by numeric team ID
+            event_team_id = details.get("eventOwnerTeamId")
+            if event_team_id == home_team.get("id"):
+                team_abbrev = home_abbrev
+            elif event_team_id == away_team.get("id"):
+                team_abbrev = away_abbrev
+
+        team_side = "home" if team_abbrev == home_abbrev else "away"
 
         self._queue.append(
             WeightedEvent(

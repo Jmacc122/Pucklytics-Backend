@@ -5,6 +5,7 @@ Starts the slow-mode scheduler on startup and exposes REST endpoints
 for the frontend to consume.
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -184,12 +185,48 @@ async def get_today_games():
     return results
 
 
+def _mmss_to_seconds(t: str) -> int:
+    """Parse a MM:SS clock string to total seconds. Returns 0 on bad input."""
+    try:
+        m, s = t.split(":")
+        return int(m) * 60 + int(s)
+    except (ValueError, AttributeError):
+        return 0
+
+
+def _period_duration(period: int) -> int:
+    """Return period length in seconds (OT = 5 min, regulation = 20 min)."""
+    return 300 if period > 3 else 1200
+
+
 @app.get("/games/{game_id}/events", response_model=list[TiltEvent])
 async def get_game_events(game_id: int):
-    """Return the current active events in the tilt rolling window for a game."""
-    rows = await database.get_active_events(game_id)
+    """
+    Return active tilt events for a game, filtered to the last 3 minutes
+    of game clock within the current period.
+    """
+    rows, game = await asyncio.gather(
+        database.get_active_events(game_id),
+        database.get_game(game_id),
+    )
     if not rows:
         raise HTTPException(status_code=404, detail=f"No active events for game {game_id}")
+
+    time_remaining = game["time_remaining"] if game else ""
+
+    if game and time_remaining and time_remaining != "Intermission":
+        current_period = game["period"]
+        elapsed = _period_duration(current_period) - _mmss_to_seconds(time_remaining)
+        cutoff = max(0, elapsed - 180)  # events from last 3 minutes
+
+        rows = [
+            r for r in rows
+            if r["period"] == current_period
+            and _mmss_to_seconds(r["time_in_period"]) >= cutoff
+        ]
+    elif time_remaining == "Intermission":
+        rows = []
+
     return [TiltEvent(**r) for r in rows]
 
 

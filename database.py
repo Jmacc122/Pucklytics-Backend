@@ -93,6 +93,11 @@ async def _create_tables() -> None:
             ON tilt_events (game_id, sort_order ASC)
         """)
 
+        # Idempotent column additions for DBs created before these columns existed
+        await conn.execute(
+            "ALTER TABLE tilt_events ADD COLUMN IF NOT EXISTS team_abbrev TEXT DEFAULT ''"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Game queries

@@ -122,7 +122,7 @@ async def track_game(game_id: int) -> None:
                 if event_id in seen_event_ids:
                     continue
                 seen_event_ids.add(event_id)
-                engine.push_event(event, home_team)
+                engine.push_event(event, home_info, away_info)
 
             net_tilt, tilt_home, tilt_away = engine.calculate()
             active_events = engine.get_active_events()
