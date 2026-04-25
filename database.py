@@ -254,7 +254,7 @@ async def get_active_events(game_id: int) -> list[dict]:
             """
             SELECT * FROM tilt_events
             WHERE game_id = $1
-            ORDER BY sort_order ASC
+            ORDER BY sort_order DESC
             """,
             game_id,
         )
