@@ -100,9 +100,18 @@ async def track_game(game_id: int) -> None:
 
             period_desc = data.get("periodDescriptor", {})
             period = period_desc.get("number", 0)
-            time_remaining = data.get("clock", {}).get("timeRemaining", "")
 
-            strength = _parse_strength(situation_code)
+            # ----------------------------------------------------------------
+            # Intermission — override clock and strength, skip time parsing
+            # ----------------------------------------------------------------
+            clock = data.get("clock", {})
+            if clock.get("inIntermission", False):
+                time_remaining = "Intermission"
+                strength = "evenStrength"
+            else:
+                time_remaining = clock.get("timeRemaining", "")
+                strength = _parse_strength(situation_code)
+
             empty_net = _parse_situation_code(situation_code)
 
             # ----------------------------------------------------------------
@@ -116,9 +125,10 @@ async def track_game(game_id: int) -> None:
                 engine.push_event(event, home_team)
 
             net_tilt, tilt_home, tilt_away = engine.calculate()
+            active_events = engine.get_active_events()
 
             # ----------------------------------------------------------------
-            # Persist game state and tilt snapshot
+            # Persist game state, tilt snapshot, and rolling-window events
             # ----------------------------------------------------------------
             try:
                 await database.upsert_game(
@@ -139,12 +149,13 @@ async def track_game(game_id: int) -> None:
                     home_score=tilt_home,
                     away_score=tilt_away,
                 )
+                await database.upsert_tilt_events(game_id, active_events)
             except Exception as exc:
                 logger.error("DB write error for game %s: %s", game_id, exc)
 
             logger.debug(
-                "Game %s | state=%s period=%s %s | tilt=%.3f",
-                game_id, game_state, period, time_remaining, net_tilt,
+                "Game %s | state=%s period=%s %s | tilt=%.3f | events=%d",
+                game_id, game_state, period, time_remaining, net_tilt, len(active_events),
             )
 
             # ----------------------------------------------------------------

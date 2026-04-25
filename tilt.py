@@ -35,11 +35,15 @@ WINDOW_SECONDS = 300  # 5 minutes
 
 @dataclass
 class WeightedEvent:
-    team: str          # "home" or "away"
+    event_id: int          # NHL API eventId
+    sort_order: int        # NHL API sortOrder — used as upsert key in DB
+    team: str              # "home" or "away"
+    team_abbrev: str       # actual team abbreviation, e.g. "TOR"
     event_type: str
     base_weight: float
     occurred_at: datetime
     period: int
+    time_in_period: str    # e.g. "12:34"
 
 
 def _decay_factor(age_seconds: float) -> float:
@@ -62,8 +66,8 @@ class TiltEngine:
         """
         Ingest a raw play-by-play event dict from the NHL API.
 
-        Expected fields: typeDescKey, eventOwnerTeamId / team abbrev,
-        periodDescriptor.number, timeInPeriod.
+        Expected fields: typeDescKey, details.eventOwnerTeamAbbrev,
+        periodDescriptor.number, timeInPeriod, eventId, sortOrder.
         """
         event_type = event.get("typeDescKey", "")
         weight = EVENT_WEIGHTS.get(event_type)
@@ -77,19 +81,32 @@ class TiltEngine:
             self._queue.clear()
         self._current_period = period
 
-        # Resolve which side owns the event
-        event_team = event.get("details", {}).get("eventOwnerTeamAbbrev", "")
-        team_side = "home" if event_team == home_team_abbrev else "away"
+        team_abbrev = event.get("details", {}).get("eventOwnerTeamAbbrev", "")
+        team_side = "home" if team_abbrev == home_team_abbrev else "away"
 
         self._queue.append(
             WeightedEvent(
+                event_id=event.get("eventId", 0),
+                sort_order=event.get("sortOrder", event.get("eventId", 0)),
                 team=team_side,
+                team_abbrev=team_abbrev,
                 event_type=event_type,
                 base_weight=weight,
                 occurred_at=datetime.now(timezone.utc),
                 period=period,
+                time_in_period=event.get("timeInPeriod", ""),
             )
         )
+
+    def _prune_stale(self, now: datetime) -> None:
+        """Remove events that have aged past the 5-minute window."""
+        stale = [ev for ev in self._queue
+                 if (now - ev.occurred_at).total_seconds() >= WINDOW_SECONDS]
+        for ev in stale:
+            try:
+                self._queue.remove(ev)
+            except ValueError:
+                pass
 
     def calculate(self) -> tuple[float, float, float]:
         """
@@ -100,27 +117,41 @@ class TiltEngine:
             net_tilt > 0 means home team has tilt advantage.
         """
         now = datetime.now(timezone.utc)
+        self._prune_stale(now)
+
         home_score = 0.0
         away_score = 0.0
-        stale: list[WeightedEvent] = []
-
         for ev in self._queue:
             age = (now - ev.occurred_at).total_seconds()
-            if age >= WINDOW_SECONDS:
-                stale.append(ev)
-                continue
             weighted = ev.base_weight * _decay_factor(age)
             if ev.team == "home":
                 home_score += weighted
             else:
                 away_score += weighted
 
-        # Prune expired events from the front of the deque
-        for ev in stale:
-            try:
-                self._queue.remove(ev)
-            except ValueError:
-                pass
-
         net_tilt = round(home_score - away_score, 4)
         return net_tilt, round(home_score, 4), round(away_score, 4)
+
+    def get_active_events(self) -> list[dict]:
+        """
+        Return all events currently in the rolling window with their
+        current decayed weights. Call after calculate() so stale events
+        are already pruned.
+        """
+        now = datetime.now(timezone.utc)
+        result = []
+        for ev in self._queue:
+            age = (now - ev.occurred_at).total_seconds()
+            if age >= WINDOW_SECONDS:
+                continue
+            result.append({
+                "event_id": ev.event_id,
+                "sort_order": ev.sort_order,
+                "event_type": ev.event_type,
+                "team_abbrev": ev.team_abbrev,
+                "base_weight": ev.base_weight,
+                "decayed_weight": round(ev.base_weight * _decay_factor(age), 4),
+                "time_in_period": ev.time_in_period,
+                "period": ev.period,
+            })
+        return result

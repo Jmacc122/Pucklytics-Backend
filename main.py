@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 import database
-from models import GameState, TiltResponse, TiltRecord, HealthResponse
+from models import GameState, TiltResponse, TiltRecord, TiltEvent, HealthResponse
 from scheduler import create_scheduler, fetch_schedule, _ensure_fast_mode
 
 load_dotenv()
@@ -169,6 +169,15 @@ async def get_today_games():
         results.append(state)
 
     return results
+
+
+@app.get("/games/{game_id}/events", response_model=list[TiltEvent])
+async def get_game_events(game_id: int):
+    """Return the current active events in the tilt rolling window for a game."""
+    rows = await database.get_active_events(game_id)
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No active events for game {game_id}")
+    return [TiltEvent(**r) for r in rows]
 
 
 @app.get("/games/{game_id}", response_model=GameState)

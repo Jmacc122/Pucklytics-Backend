@@ -35,5 +35,19 @@ class TiltResponse(BaseModel):
     history: list[TiltRecord]
 
 
+class TiltEvent(BaseModel):
+    id: Optional[int] = None
+    game_id: int
+    event_id: int
+    sort_order: int
+    event_type: str
+    team_abbrev: str
+    base_weight: float
+    decayed_weight: float
+    time_in_period: str
+    period: int
+    created_at: datetime
+
+
 class HealthResponse(BaseModel):
     status: str
