@@ -148,6 +148,8 @@ async def track_game(game_id: int) -> None:
                     net_tilt=net_tilt,
                     home_score=tilt_home,
                     away_score=tilt_away,
+                    period=period,
+                    time_remaining=time_remaining,
                 )
                 await database.upsert_tilt_events(game_id, active_events)
             except Exception as exc:

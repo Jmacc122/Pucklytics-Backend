@@ -55,12 +55,14 @@ async def _create_tables() -> None:
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS tilt_history (
-                id          BIGSERIAL PRIMARY KEY,
-                game_id     BIGINT NOT NULL REFERENCES games(game_id) ON DELETE CASCADE,
-                net_tilt    DOUBLE PRECISION NOT NULL,
-                home_score  DOUBLE PRECISION NOT NULL,
-                away_score  DOUBLE PRECISION NOT NULL,
-                timestamp   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                id             BIGSERIAL PRIMARY KEY,
+                game_id        BIGINT NOT NULL REFERENCES games(game_id) ON DELETE CASCADE,
+                net_tilt       DOUBLE PRECISION NOT NULL,
+                home_score     DOUBLE PRECISION NOT NULL,
+                away_score     DOUBLE PRECISION NOT NULL,
+                period         INTEGER NOT NULL DEFAULT 0,
+                time_remaining TEXT NOT NULL DEFAULT '',
+                timestamp      TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
 
@@ -164,14 +166,19 @@ async def insert_tilt(
     net_tilt: float,
     home_score: float,
     away_score: float,
+    period: int,
+    time_remaining: str,
 ) -> None:
     async with get_pool().acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO tilt_history (game_id, net_tilt, home_score, away_score, timestamp)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO tilt_history (
+                game_id, net_tilt, home_score, away_score,
+                period, time_remaining, timestamp
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
             """,
-            game_id, net_tilt, home_score, away_score, datetime.now(timezone.utc),
+            game_id, net_tilt, home_score, away_score,
+            period, time_remaining, datetime.now(timezone.utc),
         )
 
 

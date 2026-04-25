@@ -209,6 +209,8 @@ async def get_tilt(game_id: int):
                 net_tilt=r["net_tilt"],
                 home_score=r["home_score"],
                 away_score=r["away_score"],
+                period=r["period"],
+                time_remaining=r["time_remaining"],
                 timestamp=r["timestamp"],
             )
             for r in history_rows

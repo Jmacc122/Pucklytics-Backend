@@ -24,6 +24,8 @@ class TiltRecord(BaseModel):
     net_tilt: float
     home_score: float
     away_score: float
+    period: int
+    time_remaining: str
     timestamp: datetime
 
 
