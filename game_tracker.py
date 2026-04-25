@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 import httpx
 
 import database
-from tilt import TiltEngine
+from tilt import TiltEngine, mmss_to_seconds
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,20 @@ SHUTDOWN_DELAY = 600    # seconds to wait after game ends before exiting
 TERMINAL_STATES = {"OFF", "FINAL"}
 
 NHL_PBP_URL = "https://api-web.nhle.com/v1/gamecenter/{game_id}/play-by-play"
+
+
+def _current_game_seconds(period: int, time_remaining: str) -> int:
+    """
+    Convert current period + time_remaining (countdown) to total game seconds elapsed.
+    Periods 1-3 are 1200s each; OT periods (4+) are 300s each.
+    """
+    if period < 1 or not time_remaining:
+        return 0
+    period_dur = 300 if period > 3 else 1200
+    elapsed = period_dur - mmss_to_seconds(time_remaining)
+    if period <= 3:
+        return (period - 1) * 1200 + elapsed
+    return 3 * 1200 + (period - 4) * 300 + elapsed
 
 
 def _parse_situation_code(code: str) -> str:
@@ -73,6 +87,8 @@ async def track_game(game_id: int) -> None:
     engine = TiltEngine(game_id)
     seen_event_ids: set[int] = set()
     terminal_seen_at: datetime | None = None
+    last_game_seconds: int = 0       # frozen during intermissions
+    prev_strength: str = "evenStrength"
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         while True:
@@ -102,17 +118,28 @@ async def track_game(game_id: int) -> None:
             period = period_desc.get("number", 0)
 
             # ----------------------------------------------------------------
-            # Intermission — override clock and strength, skip time parsing
+            # Intermission — freeze the game clock; don't advance decay
             # ----------------------------------------------------------------
             clock = data.get("clock", {})
             if clock.get("inIntermission", False):
                 time_remaining = "Intermission"
                 strength = "evenStrength"
+                # last_game_seconds intentionally not updated here
             else:
                 time_remaining = clock.get("timeRemaining", "")
                 strength = _parse_strength(situation_code)
+                if period > 0 and time_remaining:
+                    last_game_seconds = _current_game_seconds(period, time_remaining)
 
             empty_net = _parse_situation_code(situation_code)
+
+            # ----------------------------------------------------------------
+            # Flush penalty events when power play ends
+            # ----------------------------------------------------------------
+            if prev_strength == "powerPlay" and strength == "evenStrength":
+                engine.flush_penalties()
+                logger.debug("Game %s | power play ended — penalties flushed", game_id)
+            prev_strength = strength
 
             # ----------------------------------------------------------------
             # Feed new play events into the tilt engine
@@ -124,8 +151,8 @@ async def track_game(game_id: int) -> None:
                 seen_event_ids.add(event_id)
                 engine.push_event(event, home_info, away_info)
 
-            net_tilt, tilt_home, tilt_away = engine.calculate()
-            active_events = engine.get_active_events()
+            net_tilt, tilt_home, tilt_away = engine.calculate(last_game_seconds)
+            active_events = engine.get_active_events(last_game_seconds)
 
             # ----------------------------------------------------------------
             # Persist game state, tilt snapshot, and rolling-window events
