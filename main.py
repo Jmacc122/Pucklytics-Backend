@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 import database
 from models import GameState, TiltResponse, TiltRecord, HealthResponse
@@ -42,6 +43,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Pucklytics API", version="1.0.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://pucklytics2.vercel.app", "http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ---------------------------------------------------------------------------
