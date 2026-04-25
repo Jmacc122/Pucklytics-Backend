@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import database
 from models import GameState, TiltResponse, TiltRecord, HealthResponse
-from scheduler import create_scheduler, fetch_schedule
+from scheduler import create_scheduler, fetch_schedule, _ensure_fast_mode
 
 load_dotenv()
 
@@ -98,6 +98,29 @@ async def test_schedule():
         "game_count": len(games),
         "games": games,
     }
+
+
+@app.get("/test/tracker")
+async def test_tracker():
+    """
+    Manually spin up the fast-mode tracker for the first non-final game found
+    on today's schedule. For testing only — does not affect the scheduler.
+    """
+    try:
+        games = await fetch_schedule()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"NHL API error: {exc}")
+
+    # Pick the first game that isn't already over
+    target = next(
+        (g for g in games if g["game_state"] not in {"OFF", "FINAL"}),
+        None,
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="No active or upcoming games found")
+
+    _ensure_fast_mode(target["game_id"])
+    return {"started": True, "game_id": target["game_id"]}
 
 
 @app.get("/games/today", response_model=list[GameState])
