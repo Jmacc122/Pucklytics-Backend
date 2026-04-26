@@ -8,7 +8,8 @@ for the frontend to consume.
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date as PyDate
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
@@ -26,6 +27,12 @@ logging.basicConfig(
 )
 
 _scheduler = create_scheduler()
+
+MT = ZoneInfo("America/Denver")
+
+
+def _mt_today() -> PyDate:
+    return datetime.now(MT).date()
 
 
 @asynccontextmanager
@@ -72,6 +79,24 @@ def _row_to_game_state(row: dict) -> GameState:
         empty_net=row["empty_net"],
         win_probability=row.get("win_probability"),
         updated_at=row["updated_at"],
+    )
+
+
+def _default_game_state(api_game: dict) -> GameState:
+    """Build a GameState with default values for a game not yet in the DB."""
+    return GameState(
+        game_id=api_game["game_id"],
+        home_team=api_game["home_team"],
+        away_team=api_game["away_team"],
+        home_score=0,
+        away_score=0,
+        period=0,
+        time_remaining="",
+        game_state=api_game["game_state"],
+        strength="evenStrength",
+        empty_net="none",
+        win_probability=None,
+        updated_at=datetime.now(timezone.utc),
     )
 
 
@@ -151,38 +176,68 @@ async def get_today_games():
         raise HTTPException(status_code=502, detail=f"NHL API error: {exc}")
 
     # One DB query; index by game_id for O(1) lookups below
-    db_rows = await database.get_today_games()
+    db_rows = await database.get_today_games(_mt_today())
     db_by_id: dict[int, dict] = {row["game_id"]: row for row in db_rows}
 
     results = []
     for api_game in api_games:
-        game_id = api_game["game_id"]
-        db_row = db_by_id.get(game_id)
-
+        db_row = db_by_id.get(api_game["game_id"])
         if db_row:
-            # Merge: DB supplies live play data; API supplies the freshest game_state
             state = _row_to_game_state(db_row)
             state = state.model_copy(update={"game_state": api_game["game_state"]})
         else:
-            # Game exists on the schedule but hasn't been tracked yet
-            state = GameState(
-                game_id=game_id,
-                home_team=api_game["home_team"],
-                away_team=api_game["away_team"],
-                home_score=0,
-                away_score=0,
-                period=0,
-                time_remaining="",
-                game_state=api_game["game_state"],
-                strength="evenStrength",
-                empty_net="none",
-                win_probability=None,
-                updated_at=datetime.now(timezone.utc),
-            )
-
+            state = _default_game_state(api_game)
         results.append(state)
 
     return results
+
+
+@app.get("/games/date/{date}", response_model=list[GameState])
+async def get_games_by_date(date: str):
+    """
+    Return games for a specific MT date (YYYY-MM-DD).
+
+    - Past dates: DB records only (game_date column).
+    - Today (MT): NHL API merged with DB, same as /games/today.
+    - Future dates: NHL API schedule with default values.
+    """
+    try:
+        target_date = PyDate.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Date must be YYYY-MM-DD")
+
+    today_mt = _mt_today()
+
+    if target_date == today_mt:
+        # Delegate to the same logic as /games/today
+        try:
+            api_games = await fetch_schedule()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"NHL API error: {exc}")
+        db_rows = await database.get_today_games(today_mt)
+        db_by_id = {row["game_id"]: row for row in db_rows}
+        results = []
+        for api_game in api_games:
+            db_row = db_by_id.get(api_game["game_id"])
+            if db_row:
+                state = _row_to_game_state(db_row)
+                state = state.model_copy(update={"game_state": api_game["game_state"]})
+            else:
+                state = _default_game_state(api_game)
+            results.append(state)
+        return results
+
+    if target_date < today_mt:
+        # Past date: return whatever we have in the DB
+        rows = await database.get_games_by_date(target_date)
+        return [_row_to_game_state(r) for r in rows]
+
+    # Future date: NHL API only, no live data
+    try:
+        api_games = await fetch_schedule(date)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"NHL API error: {exc}")
+    return [_default_game_state(g) for g in api_games]
 
 
 def _mmss_to_seconds(t: str) -> int:

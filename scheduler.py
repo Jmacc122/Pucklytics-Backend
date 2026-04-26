@@ -9,6 +9,7 @@ Each game gets its own asyncio task so multiple games run concurrently.
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -21,26 +22,30 @@ NHL_SCHEDULE_BASE_URL = "https://api-web.nhle.com/v1/schedule"
 CHECK_INTERVAL_MINUTES = 60
 LOOKAHEAD_SECONDS = CHECK_INTERVAL_MINUTES * 60  # start fast mode up to 60 min early
 
+MT = ZoneInfo("America/Denver")
+
 # Tracks game_id → asyncio.Task to avoid spawning duplicates
 _active_tasks: dict[int, asyncio.Task] = {}
 
 
-async def fetch_schedule() -> list[dict]:
+async def fetch_schedule(date_str: str | None = None) -> list[dict]:
     """
-    Hit the NHL schedule endpoint and return a parsed list of today's games.
+    Hit the NHL schedule endpoint and return a parsed list of games.
 
+    date_str: YYYY-MM-DD in Mountain Time. Defaults to today in MT.
     Each dict contains: game_id, home_team, away_team, start_time_utc,
     game_state, starts_soon (bool), is_live (bool).
     Raises httpx.HTTPError on network failure.
     """
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    url = f"{NHL_SCHEDULE_BASE_URL}/{today}"
+    if date_str is None:
+        date_str = datetime.now(MT).strftime("%Y-%m-%d")
+    url = f"{NHL_SCHEDULE_BASE_URL}/{date_str}"
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.get(url)
         resp.raise_for_status()
         data = resp.json()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(MT)
     upcoming_cutoff = now + timedelta(seconds=LOOKAHEAD_SECONDS)
 
     game_weeks = data.get("gameWeek", [])

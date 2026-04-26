@@ -9,11 +9,14 @@ Calls tilt.py after each poll, writes state to Postgres, then shuts itself down
 import asyncio
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 
 import database
 from tilt import TiltEngine, mmss_to_seconds
+
+MT = ZoneInfo("America/Denver")
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,7 @@ async def track_game(game_id: int) -> None:
     terminal_seen_at: datetime | None = None
     last_game_seconds: int = 0       # frozen during intermissions
     prev_strength: str = "evenStrength"
+    game_date_mt = datetime.now(MT).date()  # MT date when tracking started
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         while True:
@@ -169,6 +173,7 @@ async def track_game(game_id: int) -> None:
                     game_state=game_state,
                     strength=strength,
                     empty_net=empty_net,
+                    game_date=game_date_mt,
                 )
                 await database.insert_tilt(
                     game_id=game_id,

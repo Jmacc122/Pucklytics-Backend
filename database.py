@@ -8,7 +8,7 @@ for all queries.
 
 import asyncpg
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from typing import Optional
 
 # Module-level pool — initialized once at startup via init_db()
@@ -49,9 +49,14 @@ async def _create_tables() -> None:
                 strength        TEXT NOT NULL DEFAULT 'evenStrength',
                 empty_net       TEXT NOT NULL DEFAULT 'none',
                 win_probability DOUBLE PRECISION,
+                game_date       DATE,
                 updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+
+        await conn.execute(
+            "ALTER TABLE games ADD COLUMN IF NOT EXISTS game_date DATE"
+        )
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS tilt_history (
@@ -114,6 +119,7 @@ async def upsert_game(
     game_state: str,
     strength: str,
     empty_net: str,
+    game_date: Optional[date] = None,
     win_probability: Optional[float] = None,
 ) -> None:
     async with get_pool().acquire() as conn:
@@ -122,8 +128,8 @@ async def upsert_game(
             INSERT INTO games (
                 game_id, home_team, away_team, home_score, away_score,
                 period, time_remaining, game_state, strength, empty_net,
-                win_probability, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                game_date, win_probability, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
             ON CONFLICT (game_id) DO UPDATE SET
                 home_score      = EXCLUDED.home_score,
                 away_score      = EXCLUDED.away_score,
@@ -132,12 +138,13 @@ async def upsert_game(
                 game_state      = EXCLUDED.game_state,
                 strength        = EXCLUDED.strength,
                 empty_net       = EXCLUDED.empty_net,
+                game_date       = COALESCE(games.game_date, EXCLUDED.game_date),
                 win_probability = EXCLUDED.win_probability,
                 updated_at      = EXCLUDED.updated_at
             """,
             game_id, home_team, away_team, home_score, away_score,
             period, time_remaining, game_state, strength, empty_net,
-            win_probability, datetime.now(timezone.utc),
+            game_date, win_probability, datetime.now(timezone.utc),
         )
 
 
@@ -149,15 +156,27 @@ async def get_game(game_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-async def get_today_games() -> list[dict]:
-    """Return all games whose updated_at is within the current UTC day."""
+async def get_today_games(mt_date: date) -> list[dict]:
+    """Return tracked games for the given MT date."""
     async with get_pool().acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT * FROM games
-            WHERE updated_at >= CURRENT_DATE
+            WHERE game_date = $1
+               OR (game_date IS NULL AND updated_at >= CURRENT_DATE)
             ORDER BY updated_at DESC
-            """
+            """,
+            mt_date,
+        )
+    return [dict(r) for r in rows]
+
+
+async def get_games_by_date(mt_date: date) -> list[dict]:
+    """Return all tracked games for a specific MT date."""
+    async with get_pool().acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM games WHERE game_date = $1 ORDER BY updated_at DESC",
+            mt_date,
         )
     return [dict(r) for r in rows]
 
