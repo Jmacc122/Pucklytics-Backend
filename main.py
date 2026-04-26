@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, date as PyDate
 from zoneinfo import ZoneInfo
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,6 +65,49 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+NHL_BOXSCORE_URL = "https://api-web.nhle.com/v1/gamecenter/{game_id}/boxscore"
+
+
+async def _fetch_boxscore(client: httpx.AsyncClient, game_id: int) -> dict:
+    """Fetch the boxscore for a finished game. Returns empty dict on failure."""
+    try:
+        resp = await client.get(NHL_BOXSCORE_URL.format(game_id=game_id), timeout=10.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Boxscore fetch failed for %s: %s", game_id, exc)
+        return {}
+
+
+def _boxscore_to_game_state(api_game: dict, boxscore: dict, db_row: dict | None) -> GameState:
+    """
+    Build a GameState for a past game by merging schedule + boxscore + DB data.
+
+    Boxscore is authoritative for final scores and SOG.
+    DB supplies en_goals and tilt data accumulated during live tracking.
+    """
+    home = boxscore.get("homeTeam", {})
+    away = boxscore.get("awayTeam", {})
+    return GameState(
+        game_id=api_game["game_id"],
+        home_team=home.get("abbrev") or api_game["home_team"],
+        away_team=away.get("abbrev") or api_game["away_team"],
+        home_score=home.get("score", 0),
+        away_score=away.get("score", 0),
+        period=boxscore.get("periodDescriptor", {}).get("number", 0),
+        time_remaining="Final",
+        game_state=boxscore.get("gameState", api_game["game_state"]),
+        strength="evenStrength",
+        empty_net="none",
+        home_sog=home.get("sog", 0),
+        away_sog=away.get("sog", 0),
+        en_goals=(db_row.get("en_goals", 0) or 0) if db_row else 0,
+        start_time_utc=boxscore.get("startTimeUTC") or api_game.get("start_time_utc"),
+        win_probability=None,
+        updated_at=db_row["updated_at"] if db_row else datetime.now(timezone.utc),
+    )
+
 
 def _row_to_game_state(row: dict) -> GameState:
     return GameState(
@@ -233,9 +277,30 @@ async def get_games_by_date(date: str):
         return results
 
     if target_date < today_mt:
-        # Past date: return whatever we have in the DB
-        rows = await database.get_games_by_date(target_date)
-        return [_row_to_game_state(r) for r in rows]
+        # Past date: schedule → boxscore (concurrent) → merge with DB records
+        try:
+            api_games = await fetch_schedule(date)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"NHL API error: {exc}")
+
+        db_rows = await database.get_games_by_date(target_date)
+        db_by_id = {row["game_id"]: row for row in db_rows}
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            boxscores = await asyncio.gather(
+                *[_fetch_boxscore(client, g["game_id"]) for g in api_games]
+            )
+
+        results = []
+        for api_game, boxscore in zip(api_games, boxscores):
+            db_row = db_by_id.get(api_game["game_id"])
+            if boxscore:
+                results.append(_boxscore_to_game_state(api_game, boxscore, db_row))
+            elif db_row:
+                results.append(_row_to_game_state(db_row))
+            else:
+                results.append(_default_game_state(api_game))
+        return results
 
     # Future date: NHL API only, no live data
     try:
