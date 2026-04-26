@@ -110,6 +110,7 @@ async def track_game(game_id: int) -> None:
             # Parse game-level metadata
             # ----------------------------------------------------------------
             game_state = data.get("gameState", "UNKNOWN")
+            start_time_utc = data.get("startTimeUTC", "")
             situation_code = data.get("situation", {}).get("situationCode", "1551")
 
             home_info = data.get("homeTeam", {})
@@ -186,6 +187,7 @@ async def track_game(game_id: int) -> None:
                     home_sog=home_sog,
                     away_sog=away_sog,
                     en_goals=en_goals,
+                    start_time_utc=start_time_utc,
                     game_date=game_date_mt,
                 )
                 await database.insert_tilt(

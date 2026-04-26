@@ -80,6 +80,7 @@ def _row_to_game_state(row: dict) -> GameState:
         home_sog=row.get("home_sog", 0) or 0,
         away_sog=row.get("away_sog", 0) or 0,
         en_goals=row.get("en_goals", 0) or 0,
+        start_time_utc=row.get("start_time_utc") or None,
         win_probability=row.get("win_probability"),
         updated_at=row["updated_at"],
     )
@@ -98,6 +99,7 @@ def _default_game_state(api_game: dict) -> GameState:
         game_state=api_game["game_state"],
         strength="evenStrength",
         empty_net="none",
+        start_time_utc=api_game.get("start_time_utc"),
         win_probability=None,
         updated_at=datetime.now(timezone.utc),
     )
@@ -187,7 +189,7 @@ async def get_today_games():
         db_row = db_by_id.get(api_game["game_id"])
         if db_row:
             state = _row_to_game_state(db_row)
-            state = state.model_copy(update={"game_state": api_game["game_state"]})
+            state = state.model_copy(update={"game_state": api_game["game_state"], "start_time_utc": api_game.get("start_time_utc")})
         else:
             state = _default_game_state(api_game)
         results.append(state)
@@ -224,7 +226,7 @@ async def get_games_by_date(date: str):
             db_row = db_by_id.get(api_game["game_id"])
             if db_row:
                 state = _row_to_game_state(db_row)
-                state = state.model_copy(update={"game_state": api_game["game_state"]})
+                state = state.model_copy(update={"game_state": api_game["game_state"], "start_time_utc": api_game.get("start_time_utc")})
             else:
                 state = _default_game_state(api_game)
             results.append(state)

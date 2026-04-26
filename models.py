@@ -17,6 +17,7 @@ class GameState(BaseModel):
     home_sog: int = 0
     away_sog: int = 0
     en_goals: int = 0
+    start_time_utc: Optional[str] = None
     win_probability: Optional[float] = None
     updated_at: datetime
 
