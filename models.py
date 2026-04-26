@@ -14,6 +14,9 @@ class GameState(BaseModel):
     game_state: str  # "LIVE", "PRE", "FINAL", "OFF", etc.
     strength: str    # "evenStrength", "powerPlay", "penaltyShot"
     empty_net: str   # "none", "home", "away", "both"
+    home_sog: int = 0
+    away_sog: int = 0
+    en_goals: int = 0
     win_probability: Optional[float] = None
     updated_at: datetime
 

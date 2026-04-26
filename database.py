@@ -102,6 +102,15 @@ async def _create_tables() -> None:
         await conn.execute(
             "ALTER TABLE tilt_events ADD COLUMN IF NOT EXISTS team_abbrev TEXT DEFAULT ''"
         )
+        await conn.execute(
+            "ALTER TABLE games ADD COLUMN IF NOT EXISTS home_sog INTEGER DEFAULT 0"
+        )
+        await conn.execute(
+            "ALTER TABLE games ADD COLUMN IF NOT EXISTS away_sog INTEGER DEFAULT 0"
+        )
+        await conn.execute(
+            "ALTER TABLE games ADD COLUMN IF NOT EXISTS en_goals INTEGER DEFAULT 0"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +128,9 @@ async def upsert_game(
     game_state: str,
     strength: str,
     empty_net: str,
+    home_sog: int = 0,
+    away_sog: int = 0,
+    en_goals: int = 0,
     game_date: Optional[date] = None,
     win_probability: Optional[float] = None,
 ) -> None:
@@ -128,8 +140,9 @@ async def upsert_game(
             INSERT INTO games (
                 game_id, home_team, away_team, home_score, away_score,
                 period, time_remaining, game_state, strength, empty_net,
+                home_sog, away_sog, en_goals,
                 game_date, win_probability, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
             ON CONFLICT (game_id) DO UPDATE SET
                 home_score      = EXCLUDED.home_score,
                 away_score      = EXCLUDED.away_score,
@@ -138,12 +151,16 @@ async def upsert_game(
                 game_state      = EXCLUDED.game_state,
                 strength        = EXCLUDED.strength,
                 empty_net       = EXCLUDED.empty_net,
+                home_sog        = EXCLUDED.home_sog,
+                away_sog        = EXCLUDED.away_sog,
+                en_goals        = EXCLUDED.en_goals,
                 game_date       = COALESCE(games.game_date, EXCLUDED.game_date),
                 win_probability = EXCLUDED.win_probability,
                 updated_at      = EXCLUDED.updated_at
             """,
             game_id, home_team, away_team, home_score, away_score,
             period, time_remaining, game_state, strength, empty_net,
+            home_sog, away_sog, en_goals,
             game_date, win_probability, datetime.now(timezone.utc),
         )
 

@@ -77,6 +77,9 @@ def _row_to_game_state(row: dict) -> GameState:
         game_state=row["game_state"],
         strength=row["strength"],
         empty_net=row["empty_net"],
+        home_sog=row.get("home_sog", 0) or 0,
+        away_sog=row.get("away_sog", 0) or 0,
+        en_goals=row.get("en_goals", 0) or 0,
         win_probability=row.get("win_probability"),
         updated_at=row["updated_at"],
     )
@@ -142,24 +145,24 @@ async def test_schedule():
 @app.get("/test/tracker")
 async def test_tracker():
     """
-    Manually spin up the fast-mode tracker for the first non-final game found
-    on today's schedule. For testing only — does not affect the scheduler.
+    Spin up fast-mode trackers for ALL live or upcoming games today.
+    For testing only — safe to call repeatedly (_ensure_fast_mode is idempotent).
     """
     try:
         games = await fetch_schedule()
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"NHL API error: {exc}")
 
-    # Pick the first game that isn't already over
-    target = next(
-        (g for g in games if g["game_state"] not in {"OFF", "FINAL"}),
-        None,
-    )
-    if target is None:
+    started = []
+    for game in games:
+        if game["game_state"] not in {"OFF", "FINAL"}:
+            _ensure_fast_mode(game["game_id"])
+            started.append(game["game_id"])
+
+    if not started:
         raise HTTPException(status_code=404, detail="No active or upcoming games found")
 
-    _ensure_fast_mode(target["game_id"])
-    return {"started": True, "game_id": target["game_id"]}
+    return {"started": True, "game_ids": started, "count": len(started)}
 
 
 @app.get("/games/today", response_model=list[GameState])

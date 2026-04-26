@@ -93,6 +93,7 @@ async def track_game(game_id: int) -> None:
     last_game_seconds: int = 0       # frozen during intermissions
     prev_strength: str = "evenStrength"
     game_date_mt = datetime.now(MT).date()  # MT date when tracking started
+    en_goals: int = 0                # cumulative EN goals this game
 
     async with httpx.AsyncClient(timeout=10.0) as client:
         while True:
@@ -117,6 +118,8 @@ async def track_game(game_id: int) -> None:
             away_team = away_info.get("abbrev", "AWAY")
             home_score = home_info.get("score", 0)
             away_score = away_info.get("score", 0)
+            home_sog = home_info.get("sog", 0)
+            away_sog = away_info.get("sog", 0)
 
             period_desc = data.get("periodDescriptor", {})
             period = period_desc.get("number", 0)
@@ -146,7 +149,7 @@ async def track_game(game_id: int) -> None:
             prev_strength = strength
 
             # ----------------------------------------------------------------
-            # Feed new play events into the tilt engine
+            # Feed new play events into the tilt engine; count EN goals
             # ----------------------------------------------------------------
             for event in data.get("plays", []):
                 event_id = event.get("eventId")
@@ -154,6 +157,13 @@ async def track_game(game_id: int) -> None:
                     continue
                 seen_event_ids.add(event_id)
                 engine.push_event(event, home_info, away_info)
+
+                if event.get("typeDescKey") == "goal":
+                    # Prefer the situationCode embedded in the event; fall back
+                    # to the game-level code polled at this moment
+                    code = event.get("situationCode", situation_code)
+                    if len(code) >= 4 and (code[0] == "0" or code[3] == "0"):
+                        en_goals += 1
 
             net_tilt, tilt_home, tilt_away = engine.calculate(last_game_seconds)
             active_events = engine.get_active_events(last_game_seconds)
@@ -173,6 +183,9 @@ async def track_game(game_id: int) -> None:
                     game_state=game_state,
                     strength=strength,
                     empty_net=empty_net,
+                    home_sog=home_sog,
+                    away_sog=away_sog,
+                    en_goals=en_goals,
                     game_date=game_date_mt,
                 )
                 await database.insert_tilt(
