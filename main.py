@@ -325,10 +325,14 @@ def _period_duration(period: int) -> int:
 
 
 @app.get("/games/{game_id}/events", response_model=list[TiltEvent])
-async def get_game_events(game_id: int):
+async def get_game_events(
+    game_id: int,
+    full: bool = Query(default=False, description="Return all events with no time filter"),
+):
     """
-    Return active tilt events for a game, filtered to the last 3 minutes
-    of game clock within the current period.
+    Return tilt events for a game.
+    - full=false (default): events from the last 3 minutes of game clock in the current period.
+    - full=true: all events in tilt_events, no time filter.
     """
     rows, game = await asyncio.gather(
         database.get_active_events(game_id),
@@ -337,20 +341,19 @@ async def get_game_events(game_id: int):
     if not rows:
         raise HTTPException(status_code=404, detail=f"No active events for game {game_id}")
 
-    time_remaining = game["time_remaining"] if game else ""
-
-    if game and time_remaining and time_remaining != "Intermission":
-        current_period = game["period"]
-        elapsed = _period_duration(current_period) - _mmss_to_seconds(time_remaining)
-        cutoff = max(0, elapsed - 180)  # events from last 3 minutes
-
-        rows = [
-            r for r in rows
-            if r["period"] == current_period
-            and _mmss_to_seconds(r["time_in_period"]) >= cutoff
-        ]
-    elif time_remaining == "Intermission":
-        rows = []
+    if not full:
+        time_remaining = game["time_remaining"] if game else ""
+        if game and time_remaining and time_remaining != "Intermission":
+            current_period = game["period"]
+            elapsed = _period_duration(current_period) - _mmss_to_seconds(time_remaining)
+            cutoff = max(0, elapsed - 180)
+            rows = [
+                r for r in rows
+                if r["period"] == current_period
+                and _mmss_to_seconds(r["time_in_period"]) >= cutoff
+            ]
+        elif time_remaining == "Intermission":
+            rows = []
 
     return [TiltEvent(**r) for r in rows]
 
